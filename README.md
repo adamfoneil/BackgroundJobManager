@@ -1,37 +1,32 @@
 # Background Job Manager
 
-A flexible, database-agnostic background job scheduling system for .NET 10 that supports dynamic configuration, distributed execution, and comprehensive execution tracking.
+A lightweight, EF Core-based background job management system for .NET 10 that provides simple job scheduling, execution tracking, and runtime configuration through a clean "switchboard" pattern.
 
 ## Features
 
-- ✅ **Dynamic Job Scheduling** - Configure cron schedules at runtime without code changes
-- ✅ **Enable/Disable Jobs** - Turn jobs on/off dynamically with persistent state
-- ✅ **Execution History** - Track job runs with success/failure status, duration, and error details
-- ✅ **Distributed Execution** - Built-in distributed locking support for load-balanced environments
-- ✅ **Database Agnostic** - Abstract repository pattern supports MySQL, PostgreSQL, or any storage backend
-- ✅ **Cron Expressions** - Full cron syntax support with timezone awareness using Cronos library
-- ✅ **Manual Triggers** - Execute jobs on-demand outside of their schedule
-- ✅ **Next Run Calculation** - Query when a job will next execute
+- ✅ **Simple Base Class** - Extend `SwitchboardBackgroundService` to create scheduled background jobs
+- ✅ **Dynamic Configuration** - Enable/disable jobs and configure schedules at runtime via database
+- ✅ **Execution Tracking** - Automatic logging of job runs with start/finish times, success/failure status, and exception details
+- ✅ **Schedule Flexibility** - Support for simple interval notation ("5m", "1h") with extensibility for full cron expressions
+- ✅ **Timezone Support** - Schedule jobs in any timezone
+- ✅ **Database Agnostic** - Built on EF Core, works with SQL Server, PostgreSQL, SQLite, or any EF provider
+- ✅ **Structured Logging** - Automatic correlation IDs (RunId) for tracking individual executions
+- ✅ **Anti-Concurrent** - Built-in jitter and status checks prevent overlapping job executions
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│  BackgroundJobManager.Abstractions                  │
-│  - IJob, ISwitchboard                               │
-│  - IJobConfigurationRepository                      │
-│  - IJobExecutionRepository                          │
-│  - IDistributedJobLock, ICronScheduleEvaluator      │
-│  - Domain Models                                    │
-└─────────────────────────────────────────────────────┘
-						↑
-┌─────────────────────────────────────────────────────┐
-│  BackgroundJobManager.Core                          │
-│  - JobOrchestrationService (BackgroundService)      │
-│  - Switchboard, CronScheduleEvaluator               │
-│  - JobExecutionWrapper                              │
-└─────────────────────────────────────────────────────┘
-```
+The project consists of two main components:
+
+### 1. **Abstractions** (Core abstractions and base classes)
+- `ISwitchboard` - Central interface for managing job state and execution logging
+- `SwitchboardBackgroundService` - Abstract base class for implementing background jobs
+- Supporting types: `ExecuteResult`, `NextRunInfo`, `LastRunInfo`, `ServiceStatus`
+
+### 2. **Services** (EF Core implementation)
+- `SwitchboardService` - Concrete implementation of `ISwitchboard` using Entity Framework Core
+- `ManagedJobDbContext` - EF Core context with `JobConfiguration` and `JobRun` entities
+- `ICronEvaluator` / `DefaultCronEvaluator` - Extensible cron/schedule evaluation
+- **Entities**: `JobConfiguration` (job settings), `JobRun` (execution history)
 
 ## Getting Started
 

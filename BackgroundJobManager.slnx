@@ -1,4 +1,4 @@
 <Solution>
-  <Project Path="ManagedBackgroundJob.Abstractions/Abstractions.csproj" Id="031dad5b-07b8-4e01-82ec-53518f1cb4a2" />
+  <Project Path="Abstractions/Abstractions.csproj" />
   <Project Path="Services/Services.csproj" Id="19203871-ee7f-4e7d-a9a0-2c0f48bbf413" />
 </Solution>
