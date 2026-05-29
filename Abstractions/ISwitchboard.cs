@@ -32,6 +32,5 @@ public interface ISwitchboard
     /// for UIs, not for 
     /// </summary>
     Task<NextRunInfo?> GetNextRunAsync(string serviceType);
-    Task<LastRunInfo?> GetResultsAsync(string serviceType);
-    Task<IDictionary<string, (NextRunInfo? NextRun, LastRunInfo? LastRun)>> GetAdminViewAsync();
+    Task<LastRunInfo?> GetResultsAsync(string serviceType);    
 }
