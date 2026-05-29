@@ -23,6 +23,12 @@ public record ExecuteResult(
         !Success && Exception is not null ? ExecuteResultType.Error :
         !Success && Exception is null ? ExecuteResultType.Warning :
         ExecuteResultType.Success;
+
+    /// <summary>
+    /// additional messages related to the execution, e.g. validation errors, warnings, etc.
+    /// that might be inconvenient to get from ILogger
+    /// </summary>
+    public string[] Messages { get; set; } = [];
 }
 
 public abstract class SwitchboardBackgroundService(

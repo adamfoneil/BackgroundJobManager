@@ -3,8 +3,9 @@ using Microsoft.Extensions.Logging;
 using ManagedBackgroundJob.Abstractions.Data;
 using ManagedBackgroundJob.Abstractions.Entities;
 using Abstractions;
+using ManagedBackgroundJob.Abstractions;
 
-namespace ManagedBackgroundJob.Abstractions.Services;
+namespace Services;
 
 /// <summary>
 /// Default implementation of ISwitchboard using EF Core for persistence
@@ -16,9 +17,11 @@ public class SwitchboardService(
 {
     private readonly ManagedJobDbContext _dbContext = dbContext;
     private readonly ICronEvaluator _cronEvaluator = cronEvaluator;
-    private readonly ILogger<SwitchboardService> _logger = logger;
+    private readonly ILogger<SwitchboardService> _logger = logger;    
 
-    public IDictionary<string, ServiceInfo> Services => throw new NotImplementedException();
+    public IDictionary<string, NextRunInfo> Schedule => throw new NotImplementedException();
+
+    public IDictionary<string, LastRunInfo> Results => throw new NotImplementedException();
 
     /// <inheritdoc />
     public async Task EnableAsync(string serviceName)
@@ -179,5 +182,10 @@ public class SwitchboardService(
             _dbContext.SaveChanges();
         }
         return config;
+    }
+
+    public Task LogResultAsync(string runId, string serviceType, LastRunInfo info)
+    {
+        throw new NotImplementedException();
     }
 }
