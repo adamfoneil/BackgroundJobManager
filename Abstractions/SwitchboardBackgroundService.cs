@@ -40,36 +40,53 @@ public abstract class SwitchboardBackgroundService(
     public ISwitchboard Switchboard { get; } = switchboard;
 
     /// <summary>
-    /// this is where your job implementation goes
+    /// your implementation of the job goes here. You can log as needed, and return success/failure and messages via the ExecuteResult.
     /// </summary>
     protected abstract Task<ExecuteResult> ExecuteInternalAsync(string runId, CancellationToken stoppingToken);
 
+    /// <summary>
+    /// how do we refer to this job in the UI and logs?
+    /// </summary>
     protected virtual string ServiceType => GetType().Name;
 
     /// <summary>
-    /// delay between job runs to prevent multiple instances from running at the same time due to clock skew or other issues with scheduling.
+    /// min delay between job runs to prevent multiple instances from running at the same time due to clock skew or other issues with scheduling.
     /// Adjust as needed based on expected job duration and scheduling frequency.
     /// </summary>
-    protected virtual TimeSpan CoreLoopDelay => TimeSpan.FromSeconds(10);
+    protected virtual int MinLoopDelaySeconds => 10;
+
+    /// <summary>
+    /// max delay between job runs to prevent multiple instances from running at the same time due to clock skew or other issues with scheduling.
+    /// Adjust as needed based on expected job duration and scheduling frequency.
+    /// </summary>
+    protected virtual int MaxLoopDelaySeconds => 15;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {        
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (Switchboard.Schedule.TryGetValue(ServiceType, out var nextRun))
+            bool allowRun = false;
+            var schedule = await Switchboard.GetNextRunAsync(ServiceType);
+
+            if (schedule is not null)
             {
                 // if disabled or alerady running, skip
-                if (nextRun.Status is ServiceStatus.Disabled or ServiceStatus.Running) return;
+                if (schedule.Status is ServiceStatus.Disabled or ServiceStatus.Running) return;
 
                 // if not scheduled to run now, skip
-                if (!nextRun.DateTimeUtc.HasValue) return;
+                if (!schedule.StartUtc.HasValue) return;
 
                 // if scheduled for the future, skip
-                if (nextRun.DateTimeUtc.HasValue && nextRun.DateTimeUtc.Value > DateTime.UtcNow) return;
+                if (schedule.StartUtc > DateTime.UtcNow) return;
+
+                allowRun = true;
             }
 
+            // can't run if not in schedule, or if schedule says not to run
+            if (!allowRun) return;
+
             var start = DateTime.UtcNow;
-            string runId = await Switchboard.LogStartAsync(ServiceType);
+            string runId = await Switchboard.LogStartAsync(ServiceType, Environment.MachineName);
             using var _ = _logger.BeginScope(new Dictionary<string, object> { ["RunId"] = runId });
             _logger.LogDebug("Starting execution of {ServiceName} with RunId {RunId}.", ServiceType, runId);
 
@@ -88,11 +105,17 @@ public abstract class SwitchboardBackgroundService(
             finally
             {
                 sw.Stop();
-                await Switchboard.LogResultAsync(runId, ServiceType, new(start, DateTime.UtcNow, sw.Elapsed, result));
+                var nextRun = Switchboard.NextRunDateTimeUtc(ServiceType);
+                await Switchboard.LogResultAsync(runId, ServiceType, new(start, DateTime.UtcNow, sw.Elapsed, result), nextRun);
                 _logger.LogInformation("{ServiceName} execution {result} in {ElapsedSeconds}s.", ServiceType, result.Success ? "succeeded" : "failed", sw.Elapsed.TotalSeconds);
             }
 
-            await Task.Delay(CoreLoopDelay, stoppingToken);
+            await Task.Delay(JitterDelay, stoppingToken);
         }
     }
+
+    /// <summary>
+    /// delay between core loop runs is random within defined bounds
+    /// </summary>
+    private TimeSpan JitterDelay => TimeSpan.FromSeconds(Random.Shared.Next(MinLoopDelaySeconds, MaxLoopDelaySeconds));
 }

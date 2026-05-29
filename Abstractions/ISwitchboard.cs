@@ -8,8 +8,8 @@ public enum ServiceStatus
 }
 
 public record NextRunInfo(
-    ServiceStatus Status,
-    DateTime? DateTimeUtc);
+    ServiceStatus Status,    
+    DateTime? StartUtc);
 
 public record LastRunInfo(
     DateTime StartedUtc,
@@ -25,11 +25,13 @@ public interface ISwitchboard
     /// <summary>
     /// generate RunId (CorrelationId) and mark job as Running
     /// </summary>
-    Task<string> LogStartAsync(string serviceType);    
+    Task<string> LogStartAsync(string serviceType, string machineName);
+    DateTime NextRunDateTimeUtc(string serviceType);
+    Task LogResultAsync(string runId, string serviceType, LastRunInfo info, DateTime nextRun);
     /// <summary>
-    /// should calculate next run time
+    /// for UIs, not for 
     /// </summary>
-    Task LogResultAsync(string runId, string serviceType, LastRunInfo info);
-    IDictionary<string, NextRunInfo> Schedule { get; }
-    IDictionary<string, LastRunInfo> Results { get; }
+    Task<NextRunInfo?> GetNextRunAsync(string serviceType);
+    Task<LastRunInfo?> GetResultsAsync(string serviceType);
+    Task<IDictionary<string, (NextRunInfo? NextRun, LastRunInfo? LastRun)>> GetAdminViewAsync();
 }

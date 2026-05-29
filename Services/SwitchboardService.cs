@@ -188,4 +188,34 @@ public class SwitchboardService(
     {
         throw new NotImplementedException();
     }
+
+    public Task<string> LogStartAsync(string serviceType, string machineName)
+    {
+        throw new NotImplementedException();
+    }
+
+    public DateTime NextRunDateTimeUtc(string serviceType)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task LogResultAsync(string runId, string serviceType, LastRunInfo info, DateTime nextRun)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<NextRunInfo?> GetNextRunAsync(string serviceType)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<LastRunInfo?> GetResultsAsync(string serviceType)
+    {
+        throw new NotImplementedException();
+    }
+
+    public Task<IDictionary<string, (NextRunInfo? NextRun, LastRunInfo? LastRun)>> GetAdminViewAsync()
+    {
+        throw new NotImplementedException();
+    }
 }
