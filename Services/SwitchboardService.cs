@@ -76,7 +76,7 @@ public class SwitchboardService(
     }
 
     /// <inheritdoc />
-    public async Task<string> StartAsync(string serviceName)
+    public async Task<string> LogStartAsync(string serviceName)
     {
         // Generate a unique run ID
         string runId = $"{serviceName}_{DateTimeOffset.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}";
@@ -113,7 +113,7 @@ public class SwitchboardService(
     public async Task<bool> IsStartedAsync(string serviceName) => await _dbContext.JobRuns.AnyAsync(r => r.ServiceName == serviceName && !r.FinishedAt.HasValue);
 
     /// <inheritdoc />
-    public async Task FinishAsync(string runId, string serviceName)
+    public async Task LogFinishAsync(string runId, string serviceName)
     {
         var jobRun = await _dbContext.JobRuns.FindAsync(runId);
         if (jobRun == null)

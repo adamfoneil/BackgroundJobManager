@@ -21,14 +21,14 @@ public abstract class ManagedBackgroundService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var serviceType = GetType().Name;
+        var serviceType = GetType().Name;        
         while (!stoppingToken.IsCancellationRequested)
         {
             if (!await Switchboard.IsEnabledAsync(serviceType)) return;
             if (await Switchboard.IsStartedAsync(serviceType)) return;
             if (!await Switchboard.ShouldRunNowAsync(serviceType)) return;
 
-            string runId = await Switchboard.StartAsync(serviceType);
+            string runId = await Switchboard.LogStartAsync(serviceType);
             using var _ = _logger.BeginScope(new Dictionary<string, object> { ["RunId"] = runId });
             _logger.LogDebug("Starting execution of {ServiceName} with RunId {RunId}.", serviceType, runId);
 
@@ -47,7 +47,7 @@ public abstract class ManagedBackgroundService(
             finally
             {
                 sw.Stop();
-                await Switchboard.FinishAsync(runId, serviceType);                
+                await Switchboard.LogFinishAsync(runId, serviceType);                
                 _logger.LogInformation("{ServiceName} execution {result} in {ElapsedSeconds}s.", serviceType, result.Success ? "succeeded" : "failed", sw.Elapsed.TotalSeconds);
             }
 
