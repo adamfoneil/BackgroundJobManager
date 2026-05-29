@@ -46,13 +46,25 @@ public abstract class SwitchboardBackgroundService(
 
     protected virtual string ServiceType => GetType().Name;
 
+    /// <summary>
+    /// delay between job runs to prevent multiple instances from running at the same time due to clock skew or other issues with scheduling.
+    /// Adjust as needed based on expected job duration and scheduling frequency.
+    /// </summary>
+    protected virtual TimeSpan CoreLoopDelay => TimeSpan.FromSeconds(10);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {        
         while (!stoppingToken.IsCancellationRequested)
         {
             if (Switchboard.Schedule.TryGetValue(ServiceType, out var nextRun))
             {
+                // if disabled or alerady running, skip
                 if (nextRun.Status is ServiceStatus.Disabled or ServiceStatus.Running) return;
+
+                // if not scheduled to run now, skip
+                if (!nextRun.DateTimeUtc.HasValue) return;
+
+                // if scheduled for the future, skip
                 if (nextRun.DateTimeUtc.HasValue && nextRun.DateTimeUtc.Value > DateTime.UtcNow) return;
             }
 
@@ -80,7 +92,7 @@ public abstract class SwitchboardBackgroundService(
                 _logger.LogInformation("{ServiceName} execution {result} in {ElapsedSeconds}s.", ServiceType, result.Success ? "succeeded" : "failed", sw.Elapsed.TotalSeconds);
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            await Task.Delay(CoreLoopDelay, stoppingToken);
         }
     }
 }
