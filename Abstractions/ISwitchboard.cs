@@ -1,13 +1,32 @@
 ﻿namespace Abstractions;
 
+public enum ServiceStatus
+{
+    Scheduled,
+    Disabled,
+    Running  
+}
+
+public record NextRunInfo(
+    ServiceStatus Status,
+    DateTime? DateTimeUtc);
+
+public record LastRunInfo(
+    DateTime StartedUtc,
+    DateTime FinishedUtc,
+    TimeSpan Duration,
+    ExecuteResult Result);
+
+/// <summary>
+/// used with SwitchboardBackgroundService to manage singleton instances of background jobs
+/// </summary>
 public interface ISwitchboard
 {
-    Task EnableAsync(string serviceType);
-    Task DisableAsync(string serviceType);
-    Task<bool> IsEnabledAsync(string serviceType);
-    Task<bool> ShouldRunNowAsync(string serviceType);
-    Task<string> LogStartAsync(string serviceType);
-    Task<bool> IsStartedAsync(string serviceType);
-    Task LogFinishAsync(string runId, string serviceType);
-    Task LogResultAsync(string runId, ExecuteResult result);
+    /// <summary>
+    /// generate RunId (CorrelationId) and mark job as Running
+    /// </summary>
+    Task<string> LogStartAsync(string serviceType);    
+    Task LogResultAsync(string runId, string serviceType, LastRunInfo info);
+    IDictionary<string, NextRunInfo> Schedule { get; }
+    IDictionary<string, LastRunInfo> Results { get; }
 }

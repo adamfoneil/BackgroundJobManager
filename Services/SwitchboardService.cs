@@ -18,6 +18,8 @@ public class SwitchboardService(
     private readonly ICronEvaluator _cronEvaluator = cronEvaluator;
     private readonly ILogger<SwitchboardService> _logger = logger;
 
+    public IDictionary<string, ServiceInfo> Services => throw new NotImplementedException();
+
     /// <inheritdoc />
     public async Task EnableAsync(string serviceName)
     {
