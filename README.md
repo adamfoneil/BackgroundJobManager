@@ -169,56 +169,360 @@ SET TimeZoneId = 'America/New_York'
 WHERE ServiceName = 'EmailReportJob';
 ```
 
-## Cron Expression Examples
 
-```
-"0 0 8 * * *"       - Every day at 8:00 AM
-"0 */15 * * * *"    - Every 15 minutes
-"0 0 0 * * MON"     - Every Monday at midnight
-"0 0 12 1 * *"      - First day of every month at noon
-"0 30 9 * * MON-FRI"- Weekdays at 9:30 AM
+## How It Works
+
+### Execution Flow
+
+1. **Job Registration**: When you add a `HostedService` that extends `SwitchboardBackgroundService`, it registers automatically
+2. **Configuration**: On first run, the job creates a `JobConfiguration` entry in the database (enabled by default, no schedule)
+3. **Scheduling Loop**: Each job continuously loops with jitter delays (10-15 seconds by default)
+4. **Schedule Check**: Before each execution, the job queries `ISwitchboard.GetNextRunAsync()` to check:
+   - Is the job enabled?
+   - Is it already running?
+   - Should it run now based on the schedule?
+5. **Execution**: If checks pass:
+   - `LogStartAsync()` creates a `JobRun` record and generates a RunId
+   - Your `ExecuteInternalAsync()` method runs
+   - `LogResultAsync()` records success/failure, duration, and any exceptions
+6. **Next Run Calculation**: The next scheduled run is calculated and stored
+
+### Anti-Concurrent Protection
+
+Jobs prevent overlapping executions through:
+- **Status tracking**: Jobs marked as "Running" won't start again
+- **Jitter delays**: Random delays (10-15 seconds) between loop iterations prevent clock-synchronized races
+- **Schedule adherence**: Jobs respect their `NextScheduledRun` timestamp
+
+### Customizable Delays
+
+Override these properties in your job class to adjust timing:
+
+```csharp
+protected override int MinLoopDelaySeconds => 30;  // Minimum delay between checks
+protected override int MaxLoopDelaySeconds => 60;  // Maximum delay between checks
 ```
 
-Cron format: `second minute hour day month dayOfWeek`
+## Schedule Notation
+
+The default `DefaultCronEvaluator` supports simple interval notation:
+
+| Notation | Interval |
+|----------|----------|
+| `5s` | Every 5 seconds |
+| `30s` | Every 30 seconds |
+| `5m` | Every 5 minutes |
+| `1h` | Every hour |
+| `12h` | Every 12 hours |
+
+**No schedule** (null or empty `CronSchedule`) means the job runs continuously (respects jitter delays only).
+
+### Upgrading to Full Cron Support
+
+To use standard cron expressions like `"0 8 * * MON"` (every Monday at 8 AM), implement a custom `ICronEvaluator`:
+
+```csharp
+// Install Cronos: dotnet add package Cronos
+using Cronos;
+
+public class CronosEvaluator : ICronEvaluator
+{
+    public DateTimeOffset? GetNextOccurrence(
+        string cronExpression, 
+        DateTimeOffset from, 
+        string timeZoneId)
+    {
+        if (string.IsNullOrWhiteSpace(cronExpression))
+            return null;
+
+        var expression = CronExpression.Parse(cronExpression, CronFormat.IncludeSeconds);
+        var timezone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        return expression.GetNextOccurrence(from, timezone);
+    }
+
+    public bool IsValid(string cronExpression)
+    {
+        return CronExpression.TryParse(cronExpression, CronFormat.IncludeSeconds, out _);
+    }
+}
+```
+
+Then register it:
+
+```csharp
+builder.Services.AddSingleton<ICronEvaluator, CronosEvaluator>();
+```
+
 
 ## Database Schema
 
-**JobConfiguration Table:**
-- Id (string, PK)
-- JobTypeName (string)
-- DisplayName (string)
-- CronSchedule (string)
-- Enabled (bool)
-- TimeZoneId (string)
-- RetentionDays (int, nullable)
-- Metadata (JSON, nullable)
+The system uses two main tables:
 
-**JobExecution Table:**
-- Id (guid, PK)
-- JobConfigurationId (string, FK)
-- ScheduledTime (datetimeoffset)
-- StartTime (datetimeoffset)
-- EndTime (datetimeoffset, nullable)
-- Status (int/enum)
-- ErrorMessage (string, nullable)
-- StackTrace (text, nullable)
-- ExecutedByInstance (string, nullable)
-- DurationMs (long, nullable)
+### JobConfiguration
+Stores job settings and schedule configuration.
 
-**JobLocks Table (for distributed locking):**
-- JobId (string, PK)
-- InstanceId (string)
-- ExpiresAt (datetime)
+| Column | Type | Description |
+|--------|------|-------------|
+| `ServiceName` | varchar(200) PK | Unique identifier for the job (matches your class name) |
+| `IsEnabled` | bit | Whether the job can run |
+| `CronSchedule` | varchar(100) | Schedule notation (null/empty = continuous) |
+| `TimeZoneId` | varchar(100) | Timezone for schedule evaluation (default: UTC) |
+| `LastScheduleCheck` | datetimeoffset | Last time schedule was evaluated |
+| `NextScheduledRun` | datetimeoffset | Calculated next run time |
 
-## Configuration Options
+**Indexes:**
+- `IsEnabled`
+- `NextScheduledRun`
 
-| Property | Default | Description |
-|----------|---------|-------------|
-| `PollingIntervalSeconds` | 30 | How often to check for jobs to execute |
-| `DefaultHistoryRetentionDays` | 30 | Days to retain execution history |
-| `JobExecutionTimeoutMinutes` | 60 | Maximum job execution time before timeout |
-| `LockDuration` | 5 minutes | How long distributed locks are held |
-| `InstanceId` | Machine name | Unique identifier for this instance |
+### JobRun
+Tracks individual job executions.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `RunId` | varchar(50) PK | Unique execution identifier |
+| `ServiceName` | varchar(200) | Which job executed |
+| `StartedAt` | datetimeoffset | Execution start time |
+| `FinishedAt` | datetimeoffset | Execution end time (nullable) |
+| `Success` | bit | Whether execution succeeded (nullable while running) |
+| `Message` | varchar(2000) | Result message |
+| `ExceptionDetails` | nvarchar(max) | Full exception details if failed |
+
+**Indexes:**
+- `ServiceName`
+- `StartedAt`
+- `(ServiceName, StartedAt)` composite
+- `FinishedAt`
+
+## Using ISwitchboard
+
+The `ISwitchboard` interface provides methods for runtime interaction with jobs. It's automatically used by `SwitchboardBackgroundService`, but you can also inject it for custom scenarios:
+
+### Core Methods
+
+```csharp
+public interface ISwitchboard
+{
+    // Called automatically by SwitchboardBackgroundService
+    Task<string> LogStartAsync(string serviceType, string machineName);
+    Task LogResultAsync(string runId, string serviceType, LastRunInfo info, DateTime nextRun);
+    DateTime NextRunDateTimeUtc(string serviceType);
+
+    // For querying status
+    Task<NextRunInfo?> GetNextRunAsync(string serviceType);
+    Task<LastRunInfo?> GetResultsAsync(string serviceType);
+    Task<IDictionary<string, (NextRunInfo? NextRun, LastRunInfo? LastRun)>> GetAdminViewAsync();
+}
+```
+
+### Example: Admin Dashboard
+
+```csharp
+[ApiController]
+[Route("api/jobs")]
+public class JobsAdminController : ControllerBase
+{
+    private readonly ISwitchboard _switchboard;
+    private readonly ManagedJobDbContext _dbContext;
+
+    public JobsAdminController(ISwitchboard switchboard, ManagedJobDbContext dbContext)
+    {
+        _switchboard = switchboard;
+        _dbContext = dbContext;
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetAllJobs()
+    {
+        var overview = await _switchboard.GetAdminViewAsync();
+        return Ok(overview);
+    }
+
+    [HttpGet("{serviceName}/status")]
+    public async Task<IActionResult> GetJobStatus(string serviceName)
+    {
+        var nextRun = await _switchboard.GetNextRunAsync(serviceName);
+        var lastRun = await _switchboard.GetResultsAsync(serviceName);
+
+        return Ok(new { nextRun, lastRun });
+    }
+
+    [HttpPut("{serviceName}/enable")]
+    public async Task<IActionResult> EnableJob(string serviceName)
+    {
+        var config = await _dbContext.JobConfigurations.FindAsync(serviceName);
+        if (config == null) return NotFound();
+
+        config.IsEnabled = true;
+        await _dbContext.SaveChangesAsync();
+
+        return Ok();
+    }
+
+    [HttpPut("{serviceName}/disable")]
+    public async Task<IActionResult> DisableJob(string serviceName)
+    {
+        var config = await _dbContext.JobConfigurations.FindAsync(serviceName);
+        if (config == null) return NotFound();
+
+        config.IsEnabled = false;
+        await _dbContext.SaveChangesAsync();
+
+        return Ok();
+    }
+
+    [HttpPut("{serviceName}/schedule")]
+    public async Task<IActionResult> UpdateSchedule(
+        string serviceName, 
+        [FromBody] string cronSchedule)
+    {
+        var config = await _dbContext.JobConfigurations.FindAsync(serviceName);
+        if (config == null) return NotFound();
+
+        config.CronSchedule = cronSchedule;
+        config.NextScheduledRun = null; // Force recalculation
+        await _dbContext.SaveChangesAsync();
+
+        return Ok();
+    }
+
+    [HttpGet("{serviceName}/history")]
+    public async Task<IActionResult> GetHistory(
+        string serviceName,
+        [FromQuery] int limit = 50)
+    {
+        var history = await _dbContext.JobRuns
+            .Where(r => r.ServiceName == serviceName)
+            .OrderByDescending(r => r.StartedAt)
+            .Take(limit)
+            .ToListAsync();
+
+        return Ok(history);
+    }
+}
+```
+
+
+## Advanced Scenarios
+
+### Custom Service Type Name
+
+By default, the job uses the class name as `ServiceType`. Override to customize:
+
+```csharp
+protected override string ServiceType => "my-custom-job-name";
+```
+
+### Adjusting Loop Delays
+
+Control how frequently the job checks if it should run:
+
+```csharp
+protected override int MinLoopDelaySeconds => 5;   // Check every 5-10 seconds
+protected override int MaxLoopDelaySeconds => 10;
+```
+
+### Collecting Custom Messages
+
+Return additional context with your execution results:
+
+```csharp
+protected override async Task<ExecuteResult> ExecuteInternalAsync(
+    string runId, 
+    CancellationToken stoppingToken)
+{
+    var messages = new List<string>();
+
+    if (someCondition)
+        messages.Add("Warning: Low disk space");
+
+    if (anotherCondition)
+        messages.Add("Skipped 5 invalid records");
+
+    return new ExecuteResult(true, "Processed 100 records")
+    {
+        Messages = messages.ToArray()
+    };
+}
+```
+
+### Machine Name Tracking
+
+Each job execution automatically logs `Environment.MachineName` via `LogStartAsync()`, useful for identifying which instance ran the job in distributed environments.
+
+### Manual Database Configuration
+
+For more control over job configuration during startup:
+
+```csharp
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<ManagedJobDbContext>();
+
+    // Ensure database exists
+    await dbContext.Database.MigrateAsync();
+
+    // Pre-configure a job
+    var config = await dbContext.JobConfigurations.FindAsync("EmailReportJob");
+    if (config == null)
+    {
+        dbContext.JobConfigurations.Add(new JobConfiguration
+        {
+            ServiceName = "EmailReportJob",
+            IsEnabled = true,
+            CronSchedule = "1h",
+            TimeZoneId = "America/New_York"
+        });
+        await dbContext.SaveChangesAsync();
+    }
+}
+```
+
+## Testing
+
+### Unit Testing Your Job
+
+Mock the dependencies to test your job logic:
+
+```csharp
+[Fact]
+public async Task EmailReportJob_SendsReport_Successfully()
+{
+    // Arrange
+    var logger = new Mock<ILogger<EmailReportJob>>();
+    var switchboard = new Mock<ISwitchboard>();
+    var emailService = new Mock<IEmailService>();
+
+    var job = new EmailReportJob(logger.Object, switchboard.Object, emailService.Object);
+
+    // Act
+    var result = await job.ExecuteInternalAsync("test-run-123", CancellationToken.None);
+
+    // Assert
+    Assert.True(result.Success);
+    emailService.Verify(e => e.SendAsync(
+        It.IsAny<string>(), 
+        It.IsAny<string>(), 
+        It.IsAny<string>()), 
+        Times.Once);
+}
+```
+
+### Integration Testing
+
+Use an in-memory database for integration tests:
+
+```csharp
+var options = new DbContextOptionsBuilder<ManagedJobDbContext>()
+    .UseInMemoryDatabase("TestDb")
+    .Options;
+
+using var context = new ManagedJobDbContext(options);
+var switchboard = new SwitchboardService(context, new DefaultCronEvaluator(), logger);
+
+// Test switchboard operations
+var runId = await switchboard.LogStartAsync("TestJob", "TestMachine");
+Assert.NotNull(runId);
+```
 
 ## Best Practices
 

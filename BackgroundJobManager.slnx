@@ -1,4 +1,3 @@
 <Solution>
   <Project Path="Abstractions/Abstractions.csproj" />
-  <Project Path="Services/Services.csproj" Id="19203871-ee7f-4e7d-a9a0-2c0f48bbf413" />
 </Solution>
