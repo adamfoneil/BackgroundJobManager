@@ -17,6 +17,9 @@ public abstract class ManagedBackgroundService(
 
     public ISwitchboard Switchboard { get; } = switchboard;
 
+    /// <summary>
+    /// this is where your job implementation goes
+    /// </summary>
     protected abstract Task<ExecuteResult> ExecuteInternalAsync(string runId, CancellationToken stoppingToken);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
