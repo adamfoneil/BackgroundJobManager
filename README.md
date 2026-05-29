@@ -28,348 +28,145 @@ The project consists of two main components:
 - `ICronEvaluator` / `DefaultCronEvaluator` - Extensible cron/schedule evaluation
 - **Entities**: `JobConfiguration` (job settings), `JobRun` (execution history)
 
-## Getting Started
 
-### 1. Define a Job
+## Quick Start
 
-Implement the `IJob` interface:
+### 1. Install Dependencies
+
+Add the project references to your ASP.NET Core or console application:
+
+```xml
+<ItemGroup>
+  <ProjectReference Include="..\BackgroundJobManager\Abstractions\Abstractions.csproj" />
+  <ProjectReference Include="..\BackgroundJobManager\Services\Services.csproj" />
+</ItemGroup>
+```
+
+### 2. Create a Background Job
+
+Implement your job by extending `SwitchboardBackgroundService`:
 
 ```csharp
-using BackgroundJobManager.Abstractions;
+using Abstractions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
-public class SendEmailReportJob : IJob
+public class EmailReportJob : SwitchboardBackgroundService
 {
 	private readonly IEmailService _emailService;
-	private readonly ILogger<SendEmailReportJob> _logger;
 
-	public string JobId => "send-email-report";
-
-	public SendEmailReportJob(IEmailService emailService, ILogger<SendEmailReportJob> logger)
+	public EmailReportJob(
+		ILogger<EmailReportJob> logger,
+		ISwitchboard switchboard,
+		IEmailService emailService)
+		: base(logger, switchboard)
 	{
 		_emailService = emailService;
-		_logger = logger;
 	}
 
-	public async Task ExecuteAsync(CancellationToken cancellationToken)
+	protected override string ServiceType => "EmailReportJob";
+
+	protected override async Task<ExecuteResult> ExecuteInternalAsync(
+		string runId, 
+		CancellationToken stoppingToken)
 	{
-		_logger.LogInformation("Generating and sending email report");
+		try
+		{
+			Logger.LogInformation("Generating email report...");
 
-		var report = await GenerateReportAsync(cancellationToken);
-		await _emailService.SendAsync("report@example.com", "Daily Report", report, cancellationToken);
+			var report = await GenerateReportAsync(stoppingToken);
+			await _emailService.SendAsync("reports@company.com", "Daily Report", report);
 
-		_logger.LogInformation("Email report sent successfully");
+			return new ExecuteResult(true, "Report sent successfully");
+		}
+		catch (Exception ex)
+		{
+			Logger.LogError(ex, "Failed to send report");
+			return new ExecuteResult(false, "Failed to send report", ex);
+		}
 	}
 
-	private async Task<string> GenerateReportAsync(CancellationToken cancellationToken)
+	private async Task<string> GenerateReportAsync(CancellationToken ct)
 	{
 		// Your report generation logic
+		await Task.Delay(100, ct);
 		return "Report content";
 	}
 }
 ```
 
-### 2. Implement Repository Interfaces
+### 3. Configure Services and Database
 
-Implement `IJobConfigurationRepository` and `IJobExecutionRepository` for your chosen database.
-
-**Example: MySQL with Entity Framework Core**
+In your `Program.cs`:
 
 ```csharp
-using BackgroundJobManager.Abstractions;
+using ManagedBackgroundJob.Abstractions;
+using ManagedBackgroundJob.Abstractions.Data;
+using ManagedBackgroundJob.Abstractions.Services;
 using Microsoft.EntityFrameworkCore;
-
-public class JobConfigurationRepository : IJobConfigurationRepository
-{
-	private readonly JobDbContext _context;
-
-	public JobConfigurationRepository(JobDbContext context)
-	{
-		_context = context;
-	}
-
-	public async Task<IEnumerable<JobConfiguration>> GetAllAsync(CancellationToken cancellationToken = default)
-	{
-		return await _context.JobConfigurations.ToListAsync(cancellationToken);
-	}
-
-	public async Task<JobConfiguration?> GetByIdAsync(string jobId, CancellationToken cancellationToken = default)
-	{
-		return await _context.JobConfigurations.FindAsync(new object[] { jobId }, cancellationToken);
-	}
-
-	public async Task UpsertAsync(JobConfiguration configuration, CancellationToken cancellationToken = default)
-	{
-		var existing = await _context.JobConfigurations.FindAsync(new object[] { configuration.Id }, cancellationToken);
-
-		if (existing == null)
-		{
-			_context.JobConfigurations.Add(configuration);
-		}
-		else
-		{
-			_context.Entry(existing).CurrentValues.SetValues(configuration);
-		}
-
-		await _context.SaveChangesAsync(cancellationToken);
-	}
-
-	public async Task DeleteAsync(string jobId, CancellationToken cancellationToken = default)
-	{
-		var config = await _context.JobConfigurations.FindAsync(new object[] { jobId }, cancellationToken);
-		if (config != null)
-		{
-			_context.JobConfigurations.Remove(config);
-			await _context.SaveChangesAsync(cancellationToken);
-		}
-	}
-}
-```
-
-### 3. Implement Distributed Lock
-
-Implement `IDistributedJobLock` for your environment.
-
-**Example: MySQL-based Locking**
-
-```csharp
-using BackgroundJobManager.Abstractions;
-using Dapper;
-using MySqlConnector;
-
-public class MySqlDistributedJobLock : IDistributedJobLock
-{
-	private readonly string _connectionString;
-
-	public MySqlDistributedJobLock(string connectionString)
-	{
-		_connectionString = connectionString;
-	}
-
-	public async Task<bool> AcquireLockAsync(
-		string jobId, 
-		string instanceId, 
-		TimeSpan lockDuration, 
-		CancellationToken cancellationToken = default)
-	{
-		await using var connection = new MySqlConnection(_connectionString);
-		await connection.OpenAsync(cancellationToken);
-
-		var expiresAt = DateTime.UtcNow.Add(lockDuration);
-
-		// Attempt to insert a lock record
-		var sql = @"
-			INSERT INTO JobLocks (JobId, InstanceId, ExpiresAt)
-			VALUES (@JobId, @InstanceId, @ExpiresAt)
-			ON DUPLICATE KEY UPDATE
-				InstanceId = IF(ExpiresAt < @Now, @InstanceId, InstanceId),
-				ExpiresAt = IF(ExpiresAt < @Now, @ExpiresAt, ExpiresAt)";
-
-		await connection.ExecuteAsync(sql, new
-		{
-			JobId = jobId,
-			InstanceId = instanceId,
-			ExpiresAt = expiresAt,
-			Now = DateTime.UtcNow
-		});
-
-		// Check if we successfully acquired the lock
-		var lockOwner = await connection.QuerySingleOrDefaultAsync<string>(
-			"SELECT InstanceId FROM JobLocks WHERE JobId = @JobId AND ExpiresAt > @Now",
-			new { JobId = jobId, Now = DateTime.UtcNow });
-
-		return lockOwner == instanceId;
-	}
-
-	public async Task ReleaseLockAsync(
-		string jobId, 
-		string instanceId, 
-		CancellationToken cancellationToken = default)
-	{
-		await using var connection = new MySqlConnection(_connectionString);
-		await connection.OpenAsync(cancellationToken);
-
-		await connection.ExecuteAsync(
-			"DELETE FROM JobLocks WHERE JobId = @JobId AND InstanceId = @InstanceId",
-			new { JobId = jobId, InstanceId = instanceId });
-	}
-
-	public async Task<bool> RenewLockAsync(
-		string jobId, 
-		string instanceId, 
-		TimeSpan lockDuration, 
-		CancellationToken cancellationToken = default)
-	{
-		await using var connection = new MySqlConnection(_connectionString);
-		await connection.OpenAsync(cancellationToken);
-
-		var expiresAt = DateTime.UtcNow.Add(lockDuration);
-
-		var rowsAffected = await connection.ExecuteAsync(
-			"UPDATE JobLocks SET ExpiresAt = @ExpiresAt WHERE JobId = @JobId AND InstanceId = @InstanceId",
-			new { JobId = jobId, InstanceId = instanceId, ExpiresAt = expiresAt });
-
-		return rowsAffected > 0;
-	}
-}
-```
-
-### 4. Configure Dependency Injection
-
-Register all services in your `Program.cs`:
-
-```csharp
-using BackgroundJobManager.Core;
+using Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add job management system
-builder.Services.AddJobManagement(options =>
-{
-	options.PollingIntervalSeconds = 30;
-	options.DefaultHistoryRetentionDays = 30;
-	options.JobExecutionTimeoutMinutes = 60;
-	options.LockDuration = TimeSpan.FromMinutes(5);
-	options.InstanceId = Environment.MachineName;
-});
+// Register the database context
+builder.Services.AddDbContext<ManagedJobDbContext>(options =>
+	options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Register your repository implementations
-builder.Services.AddScoped<IJobConfigurationRepository, JobConfigurationRepository>();
-builder.Services.AddScoped<IJobExecutionRepository, JobExecutionRepository>();
-builder.Services.AddSingleton<IDistributedJobLock, MySqlDistributedJobLock>();
+// Register the switchboard service
+builder.Services.AddScoped<ISwitchboard, SwitchboardService>();
 
-// Register your jobs
-builder.Services.AddJob<SendEmailReportJob>();
-builder.Services.AddJob<DataCleanupJob>();
+// Register the cron evaluator (use default or implement custom)
+builder.Services.AddSingleton<ICronEvaluator, DefaultCronEvaluator>();
 
-// Or scan assemblies for jobs
-// builder.Services.AddJobsFromAssemblies(ServiceLifetime.Scoped, typeof(Program).Assembly);
+// Register your background jobs as hosted services
+builder.Services.AddHostedService<EmailReportJob>();
 
 var app = builder.Build();
 
-// Seed initial job configurations (one-time setup)
+// Apply migrations on startup (optional, for development)
 using (var scope = app.Services.CreateScope())
 {
-	var configRepo = scope.ServiceProvider.GetRequiredService<IJobConfigurationRepository>();
-
-	await configRepo.UpsertAsync(new JobConfiguration
-	{
-		Id = "send-email-report",
-		JobTypeName = typeof(SendEmailReportJob).AssemblyQualifiedName!,
-		DisplayName = "Daily Email Report",
-		CronSchedule = "0 0 8 * * *", // Every day at 8:00 AM
-		Enabled = true,
-		TimeZoneId = "America/New_York",
-		RetentionDays = 90
-	});
+	var dbContext = scope.ServiceProvider.GetRequiredService<ManagedJobDbContext>();
+	await dbContext.Database.MigrateAsync();
 }
 
 app.Run();
 ```
 
-### 5. Use ISwitchboard to Manage Jobs
+### 4. Create and Apply Migrations
 
-Inject `ISwitchboard` to interact with the job management system:
+```bash
+# Add migration
+dotnet ef migrations add InitialCreate --project YourProject
 
-```csharp
-[ApiController]
-[Route("api/jobs")]
-public class JobsController : ControllerBase
-{
-	private readonly ISwitchboard _switchboard;
+# Update database
+dotnet ef database update --project YourProject
+```
 
-	public JobsController(ISwitchboard switchboard)
-	{
-		_switchboard = switchboard;
-	}
+### 5. Configure Job Schedule (via Database)
 
-	[HttpGet]
-	public async Task<IActionResult> GetAllJobs()
-	{
-		var jobs = await _switchboard.GetJobConfigurationsAsync();
-		return Ok(jobs);
-	}
+Jobs are automatically created with default settings (enabled, no schedule = continuous execution). To configure schedules:
 
-	[HttpGet("{jobId}")]
-	public async Task<IActionResult> GetJob(string jobId)
-	{
-		var job = await _switchboard.GetJobConfigurationAsync(jobId);
-		return job != null ? Ok(job) : NotFound();
-	}
+```sql
+-- Run every 5 minutes
+UPDATE JobConfigurations 
+SET CronSchedule = '5m'
+WHERE ServiceName = 'EmailReportJob';
 
-	[HttpPut("{jobId}/enable")]
-	public async Task<IActionResult> EnableJob(string jobId)
-	{
-		var config = await _switchboard.GetJobConfigurationAsync(jobId);
-		if (config == null) return NotFound();
+-- Run every hour
+UPDATE JobConfigurations 
+SET CronSchedule = '1h'
+WHERE ServiceName = 'EmailReportJob';
 
-		config.Enabled = true;
-		await _switchboard.UpdateJobConfigurationAsync(config);
+-- Disable a job
+UPDATE JobConfigurations 
+SET IsEnabled = 0
+WHERE ServiceName = 'EmailReportJob';
 
-		return Ok();
-	}
-
-	[HttpPut("{jobId}/disable")]
-	public async Task<IActionResult> DisableJob(string jobId)
-	{
-		var config = await _switchboard.GetJobConfigurationAsync(jobId);
-		if (config == null) return NotFound();
-
-		config.Enabled = false;
-		await _switchboard.UpdateJobConfigurationAsync(config);
-
-		return Ok();
-	}
-
-	[HttpPost("{jobId}/trigger")]
-	public async Task<IActionResult> TriggerJob(string jobId)
-	{
-		await _switchboard.TriggerJobNowAsync(jobId);
-		return Accepted();
-	}
-
-	[HttpGet("{jobId}/status")]
-	public async Task<IActionResult> GetJobStatus(string jobId)
-	{
-		var status = await _switchboard.GetJobStatusAsync(jobId);
-		return status != null ? Ok(status) : NotFound();
-	}
-
-	[HttpGet("{jobId}/history")]
-	public async Task<IActionResult> GetJobHistory(string jobId, [FromQuery] int pageSize = 20, [FromQuery] int pageNumber = 1)
-	{
-		var history = await _switchboard.GetJobExecutionHistoryAsync(jobId, pageSize, pageNumber);
-		return Ok(history);
-	}
-
-	[HttpGet("{jobId}/next-run")]
-	public async Task<IActionResult> GetNextRun(string jobId)
-	{
-		var nextRun = await _switchboard.GetNextScheduledTimeAsync(jobId);
-		return nextRun.HasValue ? Ok(new { nextRun = nextRun.Value }) : NotFound();
-	}
-
-	[HttpPut("{jobId}/schedule")]
-	public async Task<IActionResult> UpdateSchedule(string jobId, [FromBody] UpdateScheduleRequest request)
-	{
-		var config = await _switchboard.GetJobConfigurationAsync(jobId);
-		if (config == null) return NotFound();
-
-		config.CronSchedule = request.CronSchedule;
-		config.TimeZoneId = request.TimeZoneId ?? config.TimeZoneId;
-
-		try
-		{
-			await _switchboard.UpdateJobConfigurationAsync(config);
-			return Ok();
-		}
-		catch (ArgumentException ex)
-		{
-			return BadRequest(new { error = ex.Message });
-		}
-	}
-}
-
-public record UpdateScheduleRequest(string CronSchedule, string? TimeZoneId);
+-- Set timezone
+UPDATE JobConfigurations 
+SET TimeZoneId = 'America/New_York'
+WHERE ServiceName = 'EmailReportJob';
 ```
 
 ## Cron Expression Examples
