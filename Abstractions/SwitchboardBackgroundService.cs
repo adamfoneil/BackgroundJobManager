@@ -104,9 +104,8 @@ public abstract class SwitchboardBackgroundService(
             }
             finally
             {
-                sw.Stop();
-                var nextRun = Switchboard.NextRunDateTimeUtc(ServiceType);
-                await Switchboard.LogResultAsync(runId, ServiceType, new(start, DateTime.UtcNow, sw.Elapsed, result), nextRun);
+                sw.Stop();                
+                await Switchboard.LogResultAsync(runId, ServiceType, new(start, DateTime.UtcNow, sw.Elapsed, result), Switchboard.NextRunDateTimeUtc(ServiceType));
                 _logger.LogInformation("{ServiceName} execution {result} in {ElapsedSeconds}s.", ServiceType, result.Success ? "succeeded" : "failed", sw.Elapsed.TotalSeconds);
             }
 
