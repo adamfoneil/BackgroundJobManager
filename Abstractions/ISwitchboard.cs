@@ -2,9 +2,9 @@
 
 public enum ServiceStatus
 {
-    Scheduled,
-    Disabled,
-    Running  
+    Scheduled = 1,
+    Disabled = 2,
+    Running = 3
 }
 
 public record NextRunInfo(
@@ -28,9 +28,6 @@ public interface ISwitchboard
     Task<string> LogStartAsync(string serviceType, string machineName);
     DateTime NextRunDateTimeUtc(string serviceType);
     Task LogResultAsync(string runId, string serviceType, LastRunInfo info, DateTime nextRun);
-    /// <summary>
-    /// for UIs, not for 
-    /// </summary>
     Task<NextRunInfo?> GetNextRunAsync(string serviceType);
     Task<LastRunInfo?> GetResultsAsync(string serviceType);    
 }

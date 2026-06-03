@@ -29,6 +29,13 @@ public record ExecuteResult(
     /// that might be inconvenient to get from ILogger
     /// </summary>
     public string[] Messages { get; set; } = [];
+
+    public IEnumerable<string> AllMessages()
+    {
+        if (Message is not null) yield return Message;
+        foreach (var msg in Messages) yield return msg;
+        if (Exception is not null) yield return $"Exception info: {Exception}";
+    }
 }
 
 public abstract class SwitchboardBackgroundService(
