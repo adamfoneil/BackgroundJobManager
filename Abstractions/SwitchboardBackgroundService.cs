@@ -70,7 +70,7 @@ public abstract class SwitchboardBackgroundService(
 
             if (schedule is not null)
             {
-                // if disabled or alerady running, skip
+                // if disabled or already running, skip
                 if (schedule.Status is ServiceStatus.Disabled or ServiceStatus.Running) return;
 
                 // if not scheduled to run now, skip
